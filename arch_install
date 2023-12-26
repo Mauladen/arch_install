@@ -1,0 +1,126 @@
+#!/usr/bin/env bash
+
+clear
+
+# Функция для установки шрифта
+set_font() {
+    setfont ter-c32b
+    sleep 3
+}
+
+set_font
+
+# Запрос значений переменных от пользователя
+read -p "Введите раздел для BOOT (по умолчанию nvme1n1p1): " BOOT
+read -p "Введите раздел для ROOT (по умолчанию nvme1n1p2): " ROOT
+
+# Если пользователь не ввел значения, используем значения по умолчанию
+BOOT=${BOOT:-nvme1n1p1}
+ROOT=${ROOT:-nvme1n1p2}
+CHROOT="arch-chroot /mnt /bin/bash -c"
+
+# Получаем UUID устройства
+UUID_ROOT=$(blkid -s UUID -o value /dev/$ROOT)
+
+COK="[\e[1;32mУСПЕШНО\e[0m]"
+CER="[\e[1;31mОШИБКА\e[0m]"
+
+# Функция для выполнения команды и проверки её статуса
+show_status() {
+    echo -n "Выполняется команда: $@"
+    "$@" > /dev/null 2>&1
+    local status=$?
+    if [ $status -eq 0 ]; then
+        echo -e " $COK"
+    else
+        echo -e " $CER"
+    fi
+    return $status
+}
+
+# Функция для обновления зеркал и настройки pacman
+update_mirrors_and_configure_pacman() {
+    show_status pacman -S reflector --noconfirm --needed
+    show_status reflector --verbose -l 5 -p https --sort rate --save /etc/pacman.d/mirrorlist
+    show_status sed -i s/'#ParallelDownloads = 5'/'ParallelDownloads = 10'/g /etc/pacman.conf
+    show_status sed -i '/\[multilib\]/,/Include/s/^[ ]*#//' /etc/pacman.conf
+    show_status pacman -Syy
+}
+
+# Функция для форматирования и монтирования разделов
+format_and_mount_partitions() {
+    show_status mkfs.fat -F32 "/dev/$BOOT"
+    show_status mkfs.btrfs -f "/dev/$ROOT"
+    show_status mount "UUID=$UUID_ROOT" /mnt
+    show_status btrfs subvolume create /mnt/@root
+    show_status btrfs subvolume create /mnt/@home
+    show_status umount /mnt
+    show_status mount -o rw,noatime,compress=zstd,space_cache=v2,discard=async,subvol=@root "/dev/$ROOT" /mnt
+    show_status mkdir /mnt/{boot,home}
+    show_status mount -o rw,noatime,compress=zstd,space_cache=v2,discard=async,subvol=@home "/dev/$ROOT" /mnt/home
+    show_status mount "/dev/$BOOT" /mnt/boot
+}
+
+# Функция для установки основных пакетов
+install_base_packages() {
+    pacstrap /mnt base linux linux-firmware base-devel archlinux-keyring btrfs-progs intel-ucode iucode-tool bluez bluez-utils networkmanager xf86-video-amdgpu libva-mesa-driver mesa vulkan-radeon git pipewire pipewire-alsa pipewire-pulse gst-plugin-pipewire pipewire-jack wireplumber libpulse terminus-font
+    genfstab -U /mnt >> /mnt/etc/fstab
+}
+
+# Функция для настройки системы
+configure_system() {
+    show_status $CHROOT "sed -i s/'#en_US.UTF-8'/'en_US.UTF-8'/g /etc/locale.gen"
+    show_status $CHROOT "sed -i s/'#ru_RU.UTF-8'/'ru_RU.UTF-8'/g /etc/locale.gen"
+    show_status $CHROOT "locale-gen"
+    show_status $CHROOT "echo 'LANG=ru_RU.UTF-8' > /etc/locale.conf"
+    show_status $CHROOT "echo 'KEYMAP=ru' > /etc/vconsole.conf"
+    show_status $CHROOT "echo 'FONT=ter-c32b' >> /etc/vconsole.conf"
+    show_status $CHROOT "echo 'archlinux' > /etc/hostname"
+    show_status $CHROOT "echo '127.0.0.1 localhost' > /etc/hosts"
+    show_status $CHROOT "echo '::1       localhost' >> /etc/hosts"
+    show_status $CHROOT "echo '127.0.0.1 archlinux.localdomain archlinux' >> /etc/hosts"
+    show_status $CHROOT "sed -i s/'#ParallelDownloads = 5'/'ParallelDownloads = 10'/g /etc/pacman.conf"
+    show_status $CHROOT "sed -i s/'#VerbosePkgLists'/'VerbosePkgLists'/g /etc/pacman.conf"
+    show_status $CHROOT "sed -i s/'#Color'/'ILoveCandy'/g /etc/pacman.conf"
+    show_status $CHROOT "sed -i '/\[multilib\]/,/Include/s/^[ ]*#//' /etc/pacman.conf"
+    show_status $CHROOT "mkinitcpio -P"
+    show_status $CHROOT "ln -sf /usr/share/zoneinfo/Europe/Moscow /etc/localtime"
+    show_status $CHROOT "hwclock --systohc --localtime"
+    show_status $CHROOT "echo root:4110 | chpasswd"
+    show_status $CHROOT "useradd -m -G wheel -s /bin/bash mauladen"
+    show_status $CHROOT "echo mauladen:4110 | chpasswd"
+    show_status $CHROOT "sed -i s/'# %wheel ALL=(ALL:ALL) ALL'/'%wheel ALL=(ALL:ALL) ALL'/g /etc/sudoers"
+    show_status $CHROOT "systemctl enable NetworkManager.service"
+    show_status $CHROOT "systemctl enable bluetooth.service"
+}
+
+# Функция для настройки загрузчика
+configure_bootloader() {
+    show_status $CHROOT "bootctl install"
+    if [ -f "/boot/loader/loader.conf" ]; then
+        show_status $CHROOT "rm /boot/loader/loader.conf"
+    fi
+    show_status $CHROOT "echo -e 'default arch.conf\ntimeout 0\nconsole-mode max\neditor no' >> /boot/loader/loader.conf"
+    show_status $CHROOT "echo -e 'title Arch Linux\nlinux /vmlinuz-linux\ninitrd /intel-ucode.img\ninitrd /initramfs-linux.img\noptions root=UUID=$UUID_ROOT rw quiet rootflags=subvol=@root' >> /boot/loader/entries/loader.conf"
+}
+
+# Функция для завершения работы
+finish() {
+    show_status $CHROOT "exit"
+    show_status umount -R /mnt
+    echo "reboot"
+}
+
+read -p 'Хотите ли вы начать установку (Да[Y], Нет[N]) ' CONTINST
+if [[ $CONTINST =~ ^[Yy]$ ]]; then
+    clear
+    update_mirrors_and_configure_pacman
+    format_and_mount_partitions
+    install_base_packages
+    configure_system
+    configure_bootloader
+    finish
+else
+    echo -e "Скрипт завершён, никаких изменений в системе не произошло."
+    exit
+fi
