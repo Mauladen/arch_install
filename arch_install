@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 
+# Устанавливаем gum для красивого вывода
+pacman -S gum --noconfirm
+
 clear
 
 # Функция для установки шрифта
@@ -10,18 +13,7 @@ set_font() {
 
 set_font
 
-# Запрос значений переменных от пользователя
-read -p "Введите раздел для BOOT (по умолчанию nvme1n1p1): " BOOT
-read -p "Введите раздел для ROOT (по умолчанию nvme1n1p2): " ROOT
-
-# Если пользователь не ввел значения, используем значения по умолчанию
-BOOT=${BOOT:-nvme1n1p1}
-ROOT=${ROOT:-nvme1n1p2}
 CHROOT="arch-chroot /mnt /bin/bash -c"
-
-# Получаем UUID устройства
-UUID_ROOT=$(blkid -s UUID -o value /dev/$ROOT)
-
 COK="[\e[1;32mУСПЕШНО\e[0m]"
 CER="[\e[1;31mОШИБКА\e[0m]"
 
@@ -34,8 +26,61 @@ show_status() {
         echo -e " $COK"
     else
         echo -e " $CER"
+        exit 1
     fi
     return $status
+}
+
+# Функция для создания разделов
+create_partitions() {
+    # Получаем список доступных дисков
+    echo "Доступные диски и их разделы:"
+    lsblk -p -o NAME,SIZE,TYPE
+
+   # Создаем массив с дисками
+    mapfile -t DISK_LIST < <(lsblk -d -n -p -o NAME)
+
+    echo "Выберите диск для установки:"
+    DISK=$(gum choose "${DISK_LIST[@]}")
+
+    # Проверяем существование диска
+    if [ ! -b "$DISK" ]; then
+        echo "Диск не существует"
+        exit 1
+    fi
+
+    # Создаем GPT таблицу разделов
+    parted -s "$DISK" mklabel gpt
+
+    # Создаем разделы:
+    # 1. EFI раздел (512MB)
+    # 2. ROOT раздел (оставшееся место)
+    parted -s "$DISK" \
+        mkpart ESP fat32 1MiB 513MiB \
+        set 1 esp on \
+        mkpart primary btrfs 513MiB 100%
+
+    # Обновляем переменные BOOT и ROOT
+    if [[ "$DISK" == *"nvme"* ]]; then
+        BOOT="${DISK}p1"
+        ROOT="${DISK}p2"
+    else
+        BOOT="${DISK}1"
+        ROOT="${DISK}2"
+    fi
+
+    # Ждем, пока система обновит информацию о разделах
+    sleep 5
+
+    # Получаем PARTUUID корневого раздела
+    PARTUUID_ROOT=$(blkid -s PARTUUID -o value $ROOT)
+
+    echo "Разделы созданы успешно:"
+    echo "PARTUUID: $PARTUUID_ROOT"
+    echo "BOOT: $BOOT"
+    echo "ROOT: $ROOT"
+
+    sleep 3
 }
 
 # Функция для обновления зеркал и настройки pacman
@@ -49,21 +94,21 @@ update_mirrors_and_configure_pacman() {
 
 # Функция для форматирования и монтирования разделов
 format_and_mount_partitions() {
-    show_status mkfs.fat -F32 "/dev/$BOOT"
-    show_status mkfs.btrfs -f "/dev/$ROOT"
-    show_status mount "UUID=$UUID_ROOT" /mnt
+    show_status mkfs.fat -F32 $BOOT
+    show_status mkfs.btrfs -f $ROOT
+    show_status mount PARTUUID=$PARTUUID_ROOT /mnt
     show_status btrfs subvolume create /mnt/@root
     show_status btrfs subvolume create /mnt/@home
     show_status umount /mnt
-    show_status mount -o rw,noatime,compress=zstd,space_cache=v2,discard=async,subvol=@root "/dev/$ROOT" /mnt
+    show_status mount -o rw,noatime,compress=zstd,space_cache=v2,discard=async,subvol=@root $ROOT /mnt
     show_status mkdir /mnt/{boot,home}
-    show_status mount -o rw,noatime,compress=zstd,space_cache=v2,discard=async,subvol=@home "/dev/$ROOT" /mnt/home
-    show_status mount "/dev/$BOOT" /mnt/boot
+    show_status mount -o rw,noatime,compress=zstd,space_cache=v2,discard=async,subvol=@home $ROOT /mnt/home
+    show_status mount $BOOT /mnt/boot
 }
 
 # Функция для установки основных пакетов
 install_base_packages() {
-    pacstrap /mnt base linux linux-firmware base-devel archlinux-keyring btrfs-progs intel-ucode iucode-tool bluez bluez-utils networkmanager xf86-video-amdgpu libva-mesa-driver mesa vulkan-radeon git pipewire pipewire-alsa pipewire-pulse gst-plugin-pipewire pipewire-jack wireplumber libpulse terminus-font
+    pacstrap /mnt base linux linux-firmware base-devel archlinux-keyring btrfs-progs intel-ucode iucode-tool efibootmgr bluez bluez-utils networkmanager xf86-video-amdgpu libva-mesa-driver mesa vulkan-radeon git pipewire pipewire-alsa pipewire-pulse pipewire-jack wireplumber terminus-font
     genfstab -U /mnt >> /mnt/etc/fstab
 }
 
@@ -96,12 +141,8 @@ configure_system() {
 
 # Функция для настройки загрузчика
 configure_bootloader() {
-    show_status $CHROOT "bootctl install"
-    if [ -f "/boot/loader/loader.conf" ]; then
-        show_status $CHROOT "rm /boot/loader/loader.conf"
-    fi
-    show_status $CHROOT "echo -e 'default arch.conf\ntimeout 0\nconsole-mode max\neditor no' >> /boot/loader/loader.conf"
-    show_status $CHROOT "echo -e 'title Arch Linux\nlinux /vmlinuz-linux\ninitrd /intel-ucode.img\ninitrd /initramfs-linux.img\noptions root=UUID=$UUID_ROOT rw quiet rootflags=subvol=@root' >> /boot/loader/entries/loader.conf"
+    show_status $CHROOT "efibootmgr --create --disk $DISK --part 1 --label 'Arch Linux' --loader /vmlinuz-linux --unicode 'root=PARTUUID=$PARTUUID_ROOT rw quiet rootflags=subvol=@root initrd=\intel-ucode.img initrd=\initramfs-linux.img'"
+
 }
 
 # Функция для завершения работы
@@ -111,10 +152,10 @@ finish() {
     echo "reboot"
 }
 
-read -p 'Хотите ли вы начать установку (Да[Y], Нет[N]) ' CONTINST
-if [[ $CONTINST =~ ^[Yy]$ ]]; then
+if gum confirm "Начать установку Arch Linux?"; then
     clear
     update_mirrors_and_configure_pacman
+    create_partitions
     format_and_mount_partitions
     install_base_packages
     configure_system
