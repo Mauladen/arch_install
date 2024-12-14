@@ -108,7 +108,7 @@ format_and_mount_partitions() {
 
 # Функция для установки основных пакетов
 install_base_packages() {
-    pacstrap /mnt base linux linux-firmware base-devel archlinux-keyring btrfs-progs intel-ucode iucode-tool efibootmgr bluez bluez-utils networkmanager xf86-video-amdgpu libva-mesa-driver mesa vulkan-radeon git pipewire pipewire-alsa pipewire-pulse pipewire-jack wireplumber terminus-font
+    pacstrap /mnt base linux linux-firmware base-devel archlinux-keyring btrfs-progs intel-ucode iucode-tool bluez bluez-utils networkmanager xf86-video-amdgpu libva-mesa-driver mesa vulkan-radeon git pipewire pipewire-alsa pipewire-pulse pipewire-jack wireplumber terminus-font
     genfstab -U /mnt >> /mnt/etc/fstab
 }
 
@@ -141,7 +141,12 @@ configure_system() {
 
 # Функция для настройки загрузчика
 configure_bootloader() {
-    show_status $CHROOT "efibootmgr -c -d $DISK -p 1 --label 'Arch Linux' --loader /vmlinuz-linux --unicode 'root=UUID=$UUID_ROOT rw quiet rootflags=subvol=@root initrd=\intel-ucode.img initrd=\initramfs-linux.img'"
+    show_status $CHROOT "bootctl install"
+    if [ -f "/boot/loader/loader.conf" ]; then
+        show_status $CHROOT "rm /boot/loader/loader.conf"
+    fi
+    show_status $CHROOT "echo -e 'default arch.conf\ntimeout 0\nconsole-mode max\neditor no' >> /boot/loader/loader.conf"
+    show_status $CHROOT "echo -e 'title Arch Linux\nlinux /vmlinuz-linux\ninitrd /intel-ucode.img\ninitrd /initramfs-linux.img\noptions root=UUID=$UUID_ROOT rw quiet rootflags=subvol=@root' >> /boot/loader/entries/loader.conf"
 }
 
 # Функция для завершения работы
