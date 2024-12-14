@@ -76,7 +76,7 @@ create_partitions() {
     PARTUUID_ROOT=$(blkid -s PARTUUID -o value $ROOT)
 
     echo "Разделы созданы успешно:"
-    echo "UUID: $UUID_ROOT"
+    echo "PARTUUID: $PARTUUID_ROOT"
     echo "BOOT: $BOOT"
     echo "ROOT: $ROOT"
 
