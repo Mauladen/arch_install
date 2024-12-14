@@ -96,7 +96,7 @@ update_mirrors_and_configure_pacman() {
 format_and_mount_partitions() {
     show_status mkfs.fat -F32 $BOOT
     show_status mkfs.btrfs -f $ROOT
-    show_status mount PARTUUID=$PARTUUID_ROOT /mnt
+    show_status mount UUID=$UUID_ROOT /mnt
     show_status btrfs subvolume create /mnt/@root
     show_status btrfs subvolume create /mnt/@home
     show_status umount /mnt
