@@ -72,11 +72,11 @@ create_partitions() {
     # Ждем, пока система обновит информацию о разделах
     sleep 5
 
-    # Получаем PARTUUID корневого раздела
-    PARTUUID_ROOT=$(blkid -s PARTUUID -o value $ROOT)
+    # Получаем UUID корневого раздела
+    UUID_ROOT=$(blkid -s UUID -o value $ROOT)
 
     echo "Разделы созданы успешно:"
-    echo "PARTUUID: $PARTUUID_ROOT"
+    echo "UUID: $UUID_ROOT"
     echo "BOOT: $BOOT"
     echo "ROOT: $ROOT"
 
@@ -141,8 +141,7 @@ configure_system() {
 
 # Функция для настройки загрузчика
 configure_bootloader() {
-    show_status $CHROOT "efibootmgr --create --disk $DISK --part 1 --label 'Arch Linux' --loader /vmlinuz-linux --unicode 'root=PARTUUID=$PARTUUID_ROOT rw quiet rootflags=subvol=@root initrd=\intel-ucode.img initrd=\initramfs-linux.img'"
-
+    show_status $CHROOT "efibootmgr -c -d $DISK -p 1 --label 'Arch Linux' --loader /vmlinuz-linux --unicode 'root=UUID=$UUID_ROOT rw quiet rootflags=subvol=@root initrd=\intel-ucode.img initrd=\initramfs-linux.img'"
 }
 
 # Функция для завершения работы
