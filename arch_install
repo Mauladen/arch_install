@@ -72,8 +72,8 @@ create_partitions() {
     # Ждем, пока система обновит информацию о разделах
     sleep 5
 
-    # Получаем UUID корневого раздела
-    UUID_ROOT=$(blkid -s UUID -o value $ROOT)
+    # Получаем PARTUUID корневого раздела
+    PARTUUID_ROOT=$(blkid -s PARTUUID -o value $ROOT)
 
     echo "Разделы созданы успешно:"
     echo "UUID: $UUID_ROOT"
@@ -96,7 +96,7 @@ update_mirrors_and_configure_pacman() {
 format_and_mount_partitions() {
     show_status mkfs.fat -F32 $BOOT
     show_status mkfs.btrfs -f $ROOT
-    show_status mount UUID=$UUID_ROOT /mnt
+    show_status mount PARTUUID=$PARTUUID_ROOT /mnt
     show_status btrfs subvolume create /mnt/@root
     show_status btrfs subvolume create /mnt/@home
     show_status umount /mnt
@@ -146,7 +146,8 @@ configure_bootloader() {
         show_status $CHROOT "rm /boot/loader/loader.conf"
     fi
     show_status $CHROOT "echo -e 'default arch.conf\ntimeout 0\nconsole-mode max\neditor no' >> /boot/loader/loader.conf"
-    show_status $CHROOT "echo -e 'title Arch Linux\nlinux /vmlinuz-linux\ninitrd /intel-ucode.img\ninitrd /initramfs-linux.img\noptions root=UUID=$UUID_ROOT rw quiet rootflags=subvol=@root' >> /boot/loader/entries/loader.conf"
+    show_status $CHROOT "echo -e 'title Arch Linux\nlinux /vmlinuz-linux\ninitrd /intel-ucode.img\ninitrd /initramfs-linux.img\noptions root=PARTUUID=$PARTUUID_ROOT rw quiet rootflags=subvol=@root' >> /boot/loader/entries/loader.conf"
+
 }
 
 # Функция для завершения работы
