@@ -99,11 +99,23 @@ format_and_mount_partitions() {
     show_status mount PARTUUID=$PARTUUID_ROOT /mnt
     show_status btrfs subvolume create /mnt/@root
     show_status btrfs subvolume create /mnt/@home
+    show_status btrfs subvolume create /mnt/@swap
     show_status umount /mnt
     show_status mount -o rw,noatime,compress=zstd,space_cache=v2,discard=async,subvol=@root $ROOT /mnt
-    show_status mkdir /mnt/{boot,home}
+    show_status mkdir -p /mnt/{boot,home,swap}
     show_status mount -o rw,noatime,compress=zstd,space_cache=v2,discard=async,subvol=@home $ROOT /mnt/home
+    show_status mount -o rw,noatime,compress=no,space_cache=v2,subvol=@swap $ROOT /mnt/swap
     show_status mount $BOOT /mnt/boot
+    
+    # Создаем файл подкачки размером 64GB
+    show_status dd if=/dev/zero of=/mnt/swap/swapfile bs=1M count=65536 status=progress
+    show_status chmod 600 /mnt/swap/swapfile
+    show_status chattr +C /mnt/swap/swapfile
+    show_status mkswap /mnt/swap/swapfile
+    show_status swapon /mnt/swap/swapfile
+    
+    # Добавляем запись в fstab для автоматического монтирования swap при загрузке
+    echo "/swap/swapfile none swap defaults 0 0" >> /mnt/etc/fstab
 }
 
 # Функция для установки основных пакетов
@@ -146,8 +158,7 @@ configure_bootloader() {
         show_status $CHROOT "rm /boot/loader/loader.conf"
     fi
     show_status $CHROOT "echo -e 'default arch.conf\ntimeout 0\nconsole-mode max\neditor no' >> /boot/loader/loader.conf"
-    show_status $CHROOT "echo -e 'title Arch Linux\nlinux /vmlinuz-linux\ninitrd /intel-ucode.img\ninitrd /initramfs-linux.img\noptions root=PARTUUID=$PARTUUID_ROOT rw quiet rootflags=subvol=@root' >> /boot/loader/entries/loader.conf"
-
+    show_status $CHROOT "echo -e 'title Arch Linux\nlinux /vmlinuz-linux\ninitrd /intel-ucode.img\ninitrd /initramfs-linux.img\noptions root=PARTUUID=$PARTUUID_ROOT rw quiet rootflags=subvol=@root resume=/swap/swapfile' >> /boot/loader/entries/loader.conf"
 }
 
 # Функция для завершения работы
